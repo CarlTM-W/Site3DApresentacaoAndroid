@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Home 3D | Apresentação sobre Android INF2</title>
+  <link rel="icon" href="soncino.jpg" type="x-ico">
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #reset {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      background: #007BFF;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+  <button id="reset">Resetar (R)</button>
+  <script>
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    let androidModel, mixer, clock = new THREE.Clock(), mainClip;
+    let isSprinting = false, currentAction = null, lastMoveTime = 0, isFirstPerson = false;
+    const BASE_SPEED = 0.1, CAMERA_OFFSET = new THREE.Vector3(3, 4, 3), MODEL_SCALE = 0.7, IDLE_DELAY = 1;
+    const ANIM_CONFIG = { walk: { start: 0, end: 0.5, loop: true, speed: 0.7, runSpeed: 1.4 }, idle: { start: 4.5, end: 5.8, loop: true, speed: 1.3 } };
+    let yaw = 0, pitch = 0, mouseSensitivity = 0.002;
+
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    new THREE.GLTFLoader().load('android_bug.glb', (gltf) => {
+      androidModel = gltf.scene;
+      mainClip = gltf.animations[0];
+      androidModel.scale.set(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+      androidModel.position.set(0, 1, 0);
+      mixer = new THREE.AnimationMixer(androidModel);
+      scene.add(androidModel);
+      playAnimation('idle');
+      yaw = androidModel.rotation.y;
+    });
+
+    let samsungModel;
+    new THREE.GLTFLoader().load('samsung.glb', (gltf) => {
+      samsungModel = gltf.scene;
+      samsungModel.scale.set(0.005, 0.005, 0.005);
+      samsungModel.position.set(0, 2, -50);
+      scene.add(samsungModel);
+    });
+
+    let presenteModel;
+    new THREE.GLTFLoader().load('presente.glb', (gltf) => {
+      presenteModel = gltf.scene;
+      presenteModel.scale.set(0.01, 0.01, 0.01);
+      presenteModel.position.set(0, 1, 50);
+      scene.add(presenteModel);
+    });
+
+    scene.background = new THREE.Color(0xDFFFD6);
+
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(1000, 1000),
+      new THREE.MeshStandardMaterial({ color: 0xC0E8B2, roughness: 0.8, metalness: 0.2 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    scene.add(new THREE.AmbientLight(0xFFFFFF, 0.5));
+
+    const light1 = new THREE.DirectionalLight(0xDFFFD6, 0.7);
+    light1.position.set(5, 10, 5);
+    scene.add(light1);
+
+    const light2 = new THREE.DirectionalLight(0xDDFFCC, 0.5);
+    light2.position.set(-5, 10, -5);
+    scene.add(light2);
+
+    camera.position.copy(CAMERA_OFFSET);
+    camera.lookAt(0, 0, 0);
+
+    const keys = {}, keyMap = { 'w': 'ArrowUp', 'a': 'ArrowLeft', 's': 'ArrowDown', 'd': 'ArrowRight', 'shift': 'Shift', 'r': 'KeyR', 'q': 'KeyQ' };
+
+    document.addEventListener('keydown', (e) => {
+      const key = keyMap[e.key.toLowerCase()] || e.key;
+      keys[key] = true;
+      if (key === 'KeyQ') {
+        isFirstPerson = !isFirstPerson;
+        if (isFirstPerson) renderer.domElement.requestPointerLock();
+        else document.exitPointerLock();
+      }
+      if (e.shiftKey) isSprinting = true;
+      if (key === 'KeyR') resetPosition();
+    });
+
+    document.addEventListener('keyup', (e) => {
+      const key = keyMap[e.key.toLowerCase()] || e.key;
+      keys[key] = false;
+      if (!e.shiftKey) isSprinting = false;
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement === renderer.domElement && isFirstPerson) {
+        yaw -= e.movementX * mouseSensitivity;
+        pitch -= e.movementY * mouseSensitivity;
+        pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch));
+      }
+    });
+
+    function resetPosition() {
+      if (androidModel) {
+        androidModel.position.set(0, 1, 0);
+        camera.position.copy(CAMERA_OFFSET);
+        camera.lookAt(0, 0, 0);
+      }
+    }
+
+    document.getElementById('reset').onclick = resetPosition;
+
+    let animationLock = false;
+    function playAnimation(name) {
+      if (!mixer || !mainClip || !ANIM_CONFIG[name] || (currentAction && currentAction.name === name) || animationLock) return;
+      const config = ANIM_CONFIG[name];
+      animationLock = true;
+      if (currentAction) {
+        currentAction.stop();
+        mixer.uncacheAction(currentAction);
+      }
+      currentAction = mixer.clipAction(mainClip);
+      currentAction.name = name;
+      currentAction.reset();
+      currentAction.setEffectiveTimeScale(config.speed);
+      currentAction.setEffectiveWeight(1);
+      currentAction.setLoop(config.loop ? THREE.LoopRepeat : THREE.LoopOnce);
+      currentAction.clampWhenFinished = true;
+      currentAction.time = config.start;
+      currentAction.play();
+      setTimeout(() => animationLock = false, 800);
+    }
+
+    function lerpAngle(current, target, t) {
+      let diff = target - current;
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      return current + diff * t;
+    }
+
+    const ROTATION_LERP_FACTOR = 0.15;
+
+    function checkCollision(model1, model2, distanceThreshold = 2) {
+      if (!model1 || !model2) return false;
+      const distance = model1.position.distanceTo(model2.position);
+      return distance < distanceThreshold;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta(), speed = isSprinting ? BASE_SPEED * 1.5 : BASE_SPEED;
+
+      if (samsungModel) samsungModel.rotation.y += 0.01;
+      if (presenteModel) presenteModel.rotation.y += 0.01;
+
+      if (androidModel && samsungModel && checkCollision(androidModel, samsungModel)) {
+        window.location.href = 'home.html';
+      }
+
+      if (androidModel && presenteModel && checkCollision(androidModel, presenteModel)) {
+        window.location.href = 'soncino.html';
+      }
+
+      if (androidModel && currentAction) {
+        let moved = false;
+        const moveDirection = new THREE.Vector3();
+
+        if (isFirstPerson) {
+          const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+          const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+          let moveX = 0, moveZ = 0;
+          if (keys['ArrowUp'] || keys['w']) moveZ += 1;
+          if (keys['ArrowDown'] || keys['s']) moveZ -= 1;
+          if (keys['ArrowLeft'] || keys['a']) moveX -= 1;
+          if (keys['ArrowRight'] || keys['d']) moveX += 1;
+          moveDirection.add(forward.clone().multiplyScalar(moveZ));
+          moveDirection.add(right.clone().multiplyScalar(moveX));
+          if (moveDirection.length() > 0) {
+            moveDirection.normalize();
+            androidModel.position.add(moveDirection.clone().multiplyScalar(speed));
+            moved = true;
+          }
+          androidModel.rotation.y = yaw;
+          camera.position.copy(androidModel.position);
+          camera.position.y += 1;
+          camera.rotation.set(pitch, yaw, 0);
+        } else {
+          if (keys['ArrowLeft'] || keys['a']) moveDirection.x -= 1;
+          if (keys['ArrowRight'] || keys['d']) moveDirection.x += 1;
+          if (keys['ArrowUp'] || keys['w']) moveDirection.z -= 1;
+          if (keys['ArrowDown'] || keys['s']) moveDirection.z += 1;
+          if (moveDirection.length() > 0) {
+            moveDirection.normalize();
+            androidModel.position.add(moveDirection.clone().multiplyScalar(speed));
+            const targetRotation = Math.atan2(moveDirection.x, moveDirection.z);
+            androidModel.rotation.y = lerpAngle(androidModel.rotation.y, targetRotation, ROTATION_LERP_FACTOR);
+            moved = true;
+          }
+          camera.position.set(androidModel.position.x + CAMERA_OFFSET.x, androidModel.position.y + CAMERA_OFFSET.y, androidModel.position.z + CAMERA_OFFSET.z);
+          camera.lookAt(androidModel.position);
+        }
+
+        if (moved) {
+          if (currentAction.name !== 'walk') playAnimation('walk');
+          currentAction.setEffectiveTimeScale(isSprinting ? ANIM_CONFIG.walk.runSpeed : ANIM_CONFIG.walk.speed);
+          if (currentAction.time > ANIM_CONFIG.walk.end) currentAction.time = ANIM_CONFIG.walk.start;
+          lastMoveTime = performance.now();
+        } else {
+          if (performance.now() - lastMoveTime > IDLE_DELAY * 1000) {
+            if (currentAction.name !== 'idle') playAnimation('idle');
+            if (currentAction.time > ANIM_CONFIG.idle.end) currentAction.time = ANIM_CONFIG.idle.start;
+          }
+        }
+        mixer.update(delta);
+        renderer.render(scene, camera);
+      }
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const material = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8, metalness: 0.2 });
+
+    function createPedrinha(x, z, sx, sy, sz) {
+      const geometry = new THREE.BoxGeometry(sx, sy, sz);
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, sy / 2, z);
+      return mesh;
+    }
+
+    function createTree(x, z) {
+      const treeLoader = new THREE.GLTFLoader();
+      treeLoader.load('Tree.glb', function (gltf) {
+        const tree = gltf.scene;
+        tree.scale.set(2, 2.2, 2);
+        tree.position.set(x, 2.2, z);
+        scene.add(tree);
+
+        const numStones = Math.floor(Math.random() * 4) + 3;
+        for (let i = 0; i < numStones; i++) {
+          const angle = (i / numStones) * Math.PI * 2;
+          const distance = 1.5 + Math.random() * 1.5;
+          const stoneX = x + Math.cos(angle) * distance;
+          const stoneZ = z + Math.sin(angle) * distance;
+          scene.add(createPedrinha(stoneX, stoneZ, 0.6, 0.05, 0.6));
+        }
+      });
+    }
+
+    function createStonePath(startX, startZ, endX, endZ, spacing) {
+      const direction = new THREE.Vector3(endX - startX, 0, endZ - startZ).normalize();
+      const distance = Math.sqrt((endX - startX) ** 2 + (endZ - startZ) ** 2);
+      const numStones = Math.floor(distance / spacing);
+
+      for (let i = 0; i < numStones; i++) {
+        const x = startX + direction.x * i * spacing + (Math.random() - 0.5) * 0.5;
+        const z = startZ + direction.z * i * spacing + (Math.random() - 0.5) * 0.5;
+        scene.add(createPedrinha(x, z, 0.6, 0.05, 0.6));
+      }
+    }
+
+    const treePositions = [];
+    for (let i = 0; i < 50; i++) {
+      const x = Math.random() * 200 - 100;
+      const z = Math.random() * 200 - 100;
+      treePositions.push({ x, z });
+      createTree(x, z);
+    }
+
+    createStonePath(0, 0, 0, -50, 2);
+    createStonePath(0, 0, 0, 50, 2);
+  </script>
+</body>
+</html>
